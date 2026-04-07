@@ -77,22 +77,37 @@ func (provider *AlertProvider) Send(ep *endpoint.Endpoint, alert *alert.Alert, r
 	if err != nil {
 		return err
 	}
-	buffer := bytes.NewBuffer(provider.buildRequestBody(ep, alert, result, resolved))
-	request, err := http.NewRequest(http.MethodPost, cfg.WebhookURL, buffer)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.GetHTTPClient(cfg.ClientConfig).Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode > 399 {
+
+	payload := provider.buildRequestBody(ep, alert, result, resolved)
+	send := func() (int, []byte, error) {
+		request, err := http.NewRequest(http.MethodPost, cfg.WebhookURL, bytes.NewBuffer(payload))
+		if err != nil {
+			return 0, nil, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.GetHTTPClient(cfg.ClientConfig).Do(request)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer response.Body.Close()
 		body, _ := io.ReadAll(response.Body)
-		return fmt.Errorf("call to provider alert returned status code %d: %s", response.StatusCode, string(body))
+		return response.StatusCode, body, nil
 	}
-	return err
+
+	statusCode, body, err := send()
+	if err != nil {
+		return err
+	}
+	if statusCode == http.StatusTooManyRequests {
+		statusCode, body, err = send()
+		if err != nil {
+			return err
+		}
+	}
+	if statusCode > 399 {
+		return fmt.Errorf("call to provider alert returned status code %d: %s", statusCode, string(body))
+	}
+	return nil
 }
 
 type Body struct {

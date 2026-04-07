@@ -136,6 +136,33 @@ func TestAlertProvider_Send(t *testing.T) {
 	}
 }
 
+func TestAlertProvider_Send_RetriesOnTooManyRequests(t *testing.T) {
+	defer client.InjectHTTPClient(nil)
+	calls := 0
+	provider := AlertProvider{DefaultConfig: Config{WebhookURL: "http://example.com"}}
+	description := "description"
+	client.InjectHTTPClient(&http.Client{Transport: test.MockRoundTripper(func(r *http.Request) *http.Response {
+		calls++
+		if calls == 1 {
+			return &http.Response{StatusCode: http.StatusTooManyRequests, Body: http.NoBody}
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
+	})})
+
+	err := provider.Send(
+		&endpoint.Endpoint{Name: "endpoint-name", Group: "endpoint-group"},
+		&alert.Alert{Description: &description, SuccessThreshold: 5, FailureThreshold: 3},
+		&endpoint.Result{ConditionResults: []*endpoint.ConditionResult{{Condition: "[CONNECTED] == true", Success: false}}},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 attempts, got %d", calls)
+	}
+}
+
 func TestAlertProvider_buildRequestBody(t *testing.T) {
 	firstDescription := "description-1"
 	secondDescription := "description-2"
